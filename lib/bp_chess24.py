@@ -2,9 +2,15 @@
 # Copyright (C) 2021 ecrucru
 # https://github.com/ecrucru/boards
 # GPL version 3
+import itertools
+import time
+
+import bs4
+import selenium.common.exceptions
+from selenium import webdriver
 
 from typing import Optional, List, Tuple
-from lib.const import BOARD_CHESS, METHOD_HTML, CHESS960
+from lib.const import BOARD_CHESS, METHOD_HTML, CHESS960, TYPE_TOURNAMENT
 from lib.bp_interface import InternetGameInterface
 
 import re
@@ -15,7 +21,7 @@ import chess
 class InternetGameChess24(InternetGameInterface):
     def __init__(self):
         InternetGameInterface.__init__(self)
-        self.regexes.update({'url': re.compile(r'^https?:\/\/chess24\.com\/[a-z]+\/(analysis|game|download-game)\/([a-z0-9\-_]+)[\/\?\#]?', re.IGNORECASE)})
+        self.regexes.update({'url': re.compile(r'^https?:\/\/chess24\.com\/[a-z]+\/(analysis|game|download-game|watch/live-tournaments)\/([a-z0-9\-_]+)[\/\?\#]?', re.IGNORECASE)})
 
     def get_identity(self) -> Tuple[str, int, int]:
         return 'Chess24.com', BOARD_CHESS, METHOD_HTML
@@ -24,15 +30,66 @@ class InternetGameChess24(InternetGameInterface):
         m = self.regexes['url'].match(url)
         if m is not None:
             gid = str(m.group(2))
-            if len(gid) == 22:
+            if str(m.group(1)).lower() == 'watch/live-tournaments':
+                self.url_type = TYPE_TOURNAMENT
+                self.id = gid
+                return True
+            elif len(gid) == 22:
                 self.id = gid
                 return True
         return False
+
+
+    def download_tournament(self, tournament_id):
+        driver = webdriver.Chrome()
+        driver.implicitly_wait(20)
+        first_page = True
+        round_id = 1
+        match_id = 1
+        game_id = 10
+        # for game_id in itertools.count(start=1):
+        while True:
+            url = f'https://chess24.com/en/watch/live-tournaments/{tournament_id}/{round_id}/{match_id}/{game_id}'
+            print(url)
+            driver.get(url)
+            time.sleep(5)
+            print('1')
+            if first_page:
+                driver.find_element_by_xpath('//*[@id="data-consent-opt-in-all"]').click()
+                print('2')
+                driver.find_element_by_class_name('toggleNotationTable').click()
+                print('3')
+                first_page = False
+            # check if it is not in other language
+            if re.search('No games in this round', driver.find_element_by_class_name('currentGame').text):
+                match_id += 1
+                game_id = 1
+            try:
+                moves = driver.find_element_by_class_name("extension-item.Moves").text
+                print('4')
+            except selenium.common.exceptions.NoSuchElementException:
+                print('NoSuchElementException')
+                break
+            if not len(moves):
+                print('Empty moves')
+                break
+            print(moves)
+
+            # page = self.download(url, userAgent=True)  # Else HTTP 403 Forbidden
+            # soup = bs4.BeautifulSoup(page, "html.parser")
+            # moves = soup.find_all(class_="extension-item Moves")
+
+            print(f'downloaded game #{game_id}')
+            game_id += 1
+        pass
 
     def download_game(self) -> Optional[str]:
         # Download the page
         if self.id is None:
             return None
+        # In case of a tournament, handle it separately
+        if self.url_type == TYPE_TOURNAMENT:
+            return self.download_tournament(self.id)
         url = 'https://chess24.com/en/game/%s' % self.id
         page = self.download(url, userAgent=True)  # Else HTTP 403 Forbidden
         if page is None:
@@ -111,4 +168,11 @@ class InternetGameChess24(InternetGameInterface):
 
     def get_test_links(self) -> List[Tuple[str, bool]]:
         return [('https://chess24.com/en/game/DQhOOrJaQKS31LOiOmrqPg#anchor', True),    # Game with anchor
+                ('https://chess24.com/en/watch/live-tournaments/carlsen-caruana-world-chess-championship-2018', True),  # Live tournament
                 ('https://CHESS24.com', False)]                                         # Not a game (homepage)
+
+
+if __name__ == '__main__':
+    bp = InternetGameChess24()
+    bp.assign_game('https://chess24.com/en/watch/live-tournaments/carlsen-caruana-world-chess-championship-2018')
+    bp.download_game()

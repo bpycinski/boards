@@ -1,0 +1,5 @@
+flake8 
+python-chess
+selenium
+beautifulsoup4
+
